@@ -14,11 +14,12 @@ type Message struct {
 	Topic string
 
 	// Partition is reads only and MUST NOT be set when writing messages
-	Partition int
-	Offset    int64
-	Key       []byte
-	Value     []byte
-	Headers   []Header
+	Partition     int
+	Offset        int64
+	HighWaterMark int64
+	Key           []byte
+	Value         []byte
+	Headers       []Header
 
 	// If not set at the creation, Time will be automatically set when
 	// writing the message.
