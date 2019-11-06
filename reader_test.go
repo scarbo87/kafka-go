@@ -29,6 +29,11 @@ func TestReader(t *testing.T) {
 		},
 
 		{
+			scenario: "closing reader when calling ReadMessage infinitely should return the EOF error",
+			function: testReaderReadMessagesClosed,
+		},
+
+		{
 			scenario: "test special offsets -1 and -2",
 			function: testReaderSetSpecialOffsets,
 		},
@@ -107,6 +112,42 @@ func testReaderReadMessages(t *testing.T, ctx context.Context, r *Reader) {
 			t.Error("message at index", i, "has wrong value:", v)
 			return
 		}
+	}
+}
+
+func testReaderReadMessagesClosed(t *testing.T, ctx context.Context, r *Reader) {
+	const N = 10
+	prepareReader(t, ctx, r, makeTestSequence(N)...)
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+
+	var err error
+
+	go func() {
+		defer wg.Done()
+
+		var m Message
+
+		for i := 0; ; i++ {
+			m, err = r.ReadMessage(ctx)
+			if err != nil {
+				return
+			}
+			v, _ := strconv.Atoi(string(m.Value))
+			if v != i {
+				t.Error("message at index", i, "has wrong value:", v)
+				return
+			}
+		}
+	}()
+
+	time.Sleep(time.Second)
+	r.Close()
+	wg.Wait()
+	expect := "EOF"
+	if err.Error() != expect {
+		t.Errorf("Unexpected error: %s, expect %s", err, expect)
 	}
 }
 

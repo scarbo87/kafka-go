@@ -1134,6 +1134,14 @@ func (r *reader) run(ctx context.Context, offset int64) {
 	// be surfaced to the program.
 	// If the reader wasn't retrying then the program would block indefinitely
 	// on a Read call after reading the first error.
+
+	var doneConn chan struct{}
+	defer func() {
+		if doneConn != nil {
+			close(doneConn)
+		}
+	}()
+
 	for attempt := 0; true; attempt++ {
 		if attempt != 0 {
 			if !sleep(ctx, backoff(attempt, r.backoffDelayMin, r.backoffDelayMax)) {
@@ -1145,9 +1153,27 @@ func (r *reader) run(ctx context.Context, offset int64) {
 			log.Printf("initializing kafka reader for partition %d of %s starting at offset %d", r.partition, r.topic, offset)
 		})
 
+		if doneConn != nil {
+			close(doneConn)
+			doneConn = nil
+		}
+
 		conn, start, err := r.initialize(ctx, offset)
+
 		switch err {
 		case nil:
+			doneConn = make(chan struct{})
+			go func(ctx context.Context, conn *Conn, done <-chan struct{}) {
+				select {
+				case <-ctx.Done():
+					r.withLogger(func(log Logger) {
+						log.Printf("connection to %s:%d closed: %s", r.topic, r.partition, ctx.Err())
+					})
+					conn.Close()
+				case <-done:
+					return
+				}
+			}(ctx, conn, doneConn)
 		case OffsetOutOfRange:
 			// This would happen if the requested offset is passed the last
 			// offset on the partition leader. In that case we're just going
@@ -1196,6 +1222,8 @@ func (r *reader) run(ctx context.Context, offset int64) {
 				// block relies on the batch repackaging real io.EOF errors as
 				// io.UnexpectedEOF.  otherwise, we would end up swallowing real
 				// errors here.
+				continue
+			case io.ErrUnexpectedEOF:
 				break readLoop
 			case UnknownTopicOrPartition:
 				r.withErrorLogger(func(log Logger) {
